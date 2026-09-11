@@ -18,14 +18,16 @@ const LEVELS = ["Beginner", "Intermediate", "Advanced"];
 // API keys live in .env and are injected by the Vite proxy (vite.config.js),
 // so they never ship to the browser.
 const PROVIDER_URLS = {
+  gemini: "/api/gemini",
   siliconflow: "/api/siliconflow",
   zen: "/api/zen",
 };
 
 // Order = preference. Each entry maps to a provider; we fall back down the
-// list if a model errors or rate-limits. SiliconFlow Qwen is the fastest when
-// the account has balance; OpenCode Zen free tier backs it up.
+// list if a model errors or rate-limits. Gemini 3.7 Flash (Google AI Studio)
+// is the primary; SiliconFlow Qwen and OpenCode Zen free tier back it up.
 const MODELS = [
+  { id: "gemini-3.7-flash", provider: "gemini" },
   { id: "Qwen/Qwen2.5-7B-Instruct", provider: "siliconflow" },
   { id: "Qwen/Qwen3-8B", provider: "siliconflow" },
   { id: "big-pickle", provider: "zen" },
