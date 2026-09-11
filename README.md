@@ -1,16 +1,52 @@
-# React + Vite
+# AI_ChatBot — Python Tutor Console
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+An interactive, REPL-style Python tutoring chat console built with React + Vite. Ask
+anything about Python — it responds with explanations, runnable code examples, and a
+follow-up question to keep the lesson moving.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Beginner / Intermediate / Advanced difficulty levels with tailored prompts
+- Streaming responses (tokens appear as they generate)
+- Automatic model fallback: if a provider errors or rate-limits, the next model is tried
+- API keys stay server-side (injected by a Vite dev-server proxy, never shipped to the browser)
 
-## React Compiler
+## Providers
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Models are tried in order and fall back automatically:
 
-## Expanding the Oxlint configuration
+| Priority | Model | Provider |
+| --- | --- | --- |
+| 1 | `gemini-3.7-flash` | Google AI Studio |
+| 2 | `Qwen/Qwen2.5-7B-Instruct` | SiliconFlow |
+| 3 | `Qwen/Qwen3-8B` | SiliconFlow |
+| 4 | `big-pickle` | OpenCode Zen |
+| 5 | `mimo-v2.5-free` | OpenCode Zen |
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Getting started
+
+```bash
+npm install
+npm run dev
+```
+
+### API keys
+
+Copy `.env.example` style keys into `.env` (already git-ignored):
+
+```env
+VITE_OPENCODE_API_KEY=sk-...            # opencode.ai/auth
+VITE_SILICONFLOW_API_KEY=sk-...         # cloud.siliconflow.cn
+VITE_GEMINI_API_KEY=...                 # aistudio.google.com/apikey
+```
+
+The Vite dev server proxies `/api/*` to the providers, injecting each key server-side.
+
+## Scripts
+
+```bash
+npm run dev      # start dev server
+npm run build    # production build
+npm run lint     # oxlint
+npm run preview  # preview the production build
+```
