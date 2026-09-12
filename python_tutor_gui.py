@@ -189,12 +189,16 @@ def execute_python(code, timeout=RUN_TIMEOUT):
         return proc.returncode == 0, proc.stdout, proc.stderr
 
 
-def stream_chat(model_id, provider, messages):
-    """Yield text deltas for a streamed chat completion."""
+def stream_chat(model_id, provider, messages, flag=None):
+    """Yield text deltas for a streamed chat completion.
+
+    If `flag` is a dict, sets flag["truncated"]=True when the model reports
+    finish_reason "length" (answer hit the token cap).
+    """
     url = f"{PROVIDER_URLS[provider]}/chat/completions"
     payload = {
         "model": model_id,
-        "max_tokens": 700,
+        "max_tokens": 2000,
         "stream": True,
         "messages": messages,
     }
@@ -216,11 +220,23 @@ def stream_chat(model_id, provider, messages):
             except json.JSONDecodeError:
                 continue
             try:
-                delta = chunk["choices"][0]["delta"]["content"]
+                choice = chunk["choices"][0]
             except (KeyError, IndexError, TypeError):
                 continue
-            if delta:
-                yield delta
+            if flag is not None and choice.get("finish_reason") == "length":
+                flag["truncated"] = True
+            delta = choice.get("delta") or {}
+            content = delta.get("content")
+            if content:
+                yield content
+
+
+def looks_truncated(text, truncated=False):
+    """Guess whether an answer was cut off: provider said 'length', or
+    we ended inside a fenced code block (odd number of ``` fences)."""
+    if truncated:
+        return True
+    return text.count("```") % 2 == 1
 
 
 # ── GUI ────────────────────────────────────────────────────────────────
@@ -665,19 +681,54 @@ class TutorApp:
         ordered = [MODELS[0]] + [m for i, m in enumerate(MODELS) if i != 0]
         last_error = ""
         text = ""
+        model_id = provider = None
+        last_truncated = False
+
+        # First pass: get an answer from the first working model.
         for model_id, provider in ordered:
+            text = ""
+            flag = {"truncated": False}
             try:
-                for tok in stream_chat(model_id, provider, messages):
+                for tok in stream_chat(model_id, provider, messages, flag):
                     text += tok
                     self.q.put(("token", tok))
+                last_truncated = flag["truncated"]
                 if text.strip():
-                    self.q.put(("done", text))
-                    return
+                    break
                 last_error = "empty response"
             except Exception as exc:  # noqa: BLE001 - report to UI, keep fallback chain
                 last_error = str(exc).strip().replace("\n", " ")[:120]
+                if len(text.strip()) >= 40:
+                    self.q.put(("done", text, True))
+                    return
             time.sleep(0.5)
-        self.q.put(("error", last_error or "unknown error"))
+
+        if not text.strip():
+            self.q.put(("error", last_error or "empty response"))
+            return
+
+        # Continuation passes: if the answer is cut off, ask the same model to
+        # finish it instead of dumping a truncated blob on the learner.
+        rounds = 0
+        while looks_truncated(text, last_truncated) and rounds < 2:
+            rounds += 1
+            cont_messages = messages + [
+                {"role": "assistant", "content": text},
+                {"role": "user",
+                 "content": "Continue exactly where you left off. Do not repeat any "
+                            "text you already wrote."},
+            ]
+            flag = {"truncated": False}
+            try:
+                for tok in stream_chat(model_id, provider, cont_messages, flag):
+                    text += tok
+                    self.q.put(("token", tok))
+                last_truncated = flag["truncated"]
+            except Exception as exc:  # noqa: BLE001 - give up on continuing
+                last_truncated = True
+                break
+
+        self.q.put(("done", text, looks_truncated(text, last_truncated)))
 
     def _poll_queue(self):
         try:
@@ -686,7 +737,7 @@ class TutorApp:
                 if kind == "token":
                     self._insert(payload[0], ("ai_text",))
                 elif kind == "done":
-                    self._finish_assistant(payload[0], error=None)
+                    self._finish_assistant(payload[0], error=None, truncated=payload[1])
                 elif kind == "error":
                     self._finish_assistant(None, error=payload[0])
                 elif kind == "run_out":
@@ -696,7 +747,7 @@ class TutorApp:
             pass
         self.root.after(50, self._poll_queue)
 
-    def _finish_assistant(self, text, error):
+    def _finish_assistant(self, text, error, truncated=False):
         self.text.configure(state="normal")
         self.text.delete(self.block_start, "end-1c")
         self.text.configure(state="disabled")
@@ -706,8 +757,15 @@ class TutorApp:
             self.set_status("error")
         else:
             self._insert_parsed(text, "assistant")
+            if truncated:
+                self._insert(
+                    "\n[answer cut off at the output limit - say 'continue' to get the rest]\n",
+                    ("error",),
+                )
+                self.set_status("answer truncated")
+            else:
+                self.set_status("ready")
             self.history.append({"role": "assistant", "content": text})
-            self.set_status("ready")
         self.loading = False
         self.run_btn.configure(state="normal")
 

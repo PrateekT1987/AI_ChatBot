@@ -15,6 +15,7 @@ dist-ssr
 # Python
 __pycache__/
 *.py[cod]
+openai-env/
 
 # Local sandbox scratch data
 scratchpad.py
