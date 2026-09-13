@@ -50,6 +50,7 @@ OK_GREEN = "#7FB069"
 
 # ── Sandbox: snippet execution ─────────────────────────────────────────
 RUN_TIMEOUT = 10          # seconds before a snippet is killed
+SCRATCH_TIMEOUT = 120     # longer budget for the Sandbox (network/API scripts)
 RUN_MAX_OUTPUT = 20000    # characters of stdout/stderr shown
 
 LEVELS = ["Beginner", "Intermediate", "Advanced"]
@@ -249,6 +250,7 @@ class Scratchpad(tk.Toplevel):
         super().__init__(master)
         self.app = app
         self.q = queue.Queue()
+        self._cleared = False
         self.title("Sandbox \u2014 free-form scratchpad")
         self.configure(bg=BG)
         self.geometry("660x600")
@@ -296,6 +298,18 @@ class Scratchpad(tk.Toplevel):
             activebackground=PANEL_EDGE, activeforeground=TEXT,
             padx=12, pady=4, cursor="hand2")
         self.clear_btn.pack(side="left", padx=(8, 0))
+        self.save_btn = tk.Button(
+            actions, text="Save", command=self.save,
+            font=self.app.mono, bg=PANEL, fg=MUTED, borderwidth=0,
+            activebackground=PANEL_EDGE, activeforeground=TEXT,
+            padx=12, pady=4, cursor="hand2")
+        self.save_btn.pack(side="left", padx=(8, 0))
+        self.reload_btn = tk.Button(
+            actions, text="Reload", command=self.reload,
+            font=self.app.mono, bg=PANEL, fg=MUTED, borderwidth=0,
+            activebackground=PANEL_EDGE, activeforeground=TEXT,
+            padx=12, pady=4, cursor="hand2")
+        self.reload_btn.pack(side="left", padx=(8, 0))
         self.close_btn = tk.Button(
             actions, text="Close", command=self.close,
             font=self.app.mono, bg=PANEL, fg=MUTED, borderwidth=0,
@@ -332,14 +346,36 @@ class Scratchpad(tk.Toplevel):
             self.editor.insert("1.0", content)
 
     def save(self):
+        text = self.editor.get("1.0", "end-1c")
+        # Never destroy a saved script because the editor happens to be empty.
+        # Only an explicit Clear() writes an empty file.
+        if not text.strip() and not self._cleared:
+            if os.path.exists(self.FILE) and os.path.getsize(self.FILE) > 0:
+                self.set_status("kept existing scratchpad (editor is empty)", MUTED)
+                return
+        self._cleared = False
         try:
             with open(self.FILE, "w", encoding="utf-8") as f:
-                f.write(self.editor.get("1.0", "end-1c"))
+                f.write(text)
         except OSError:
             pass
+        self.set_status("saved to scratchpad.py")
+
+    def reload(self):
+        """Replace the editor with the on-disk scratchpad file."""
+        self.editor.delete("1.0", "end")
+        try:
+            with open(self.FILE, "r", encoding="utf-8") as f:
+                content = f.read()
+        except FileNotFoundError:
+            return
+        if content.strip():
+            self.editor.insert("1.0", content)
+        self.set_status("reloaded from disk")
 
     def close(self):
-        self.save()
+        # Never auto-write on close: closing must not overwrite the on-disk
+        # scratchpad with whatever happens to be in the editor. Use Save.
         self.destroy()
 
     def clear(self):
@@ -347,6 +383,9 @@ class Scratchpad(tk.Toplevel):
         self.output.configure(state="normal")
         self.output.delete("1.0", "end")
         self.output.configure(state="disabled")
+        self._cleared = True
+        self.save()  # explicit wipe of the on-disk file too
+        self._cleared = False
         self.set_status("cleared")
 
     def set_status(self, msg, color=MUTED):
@@ -357,13 +396,12 @@ class Scratchpad(tk.Toplevel):
         if not code:
             self.set_status("type some code first", ERROR)
             return
-        self.save()
         self.run_btn.configure(state="disabled")
         self.set_status("running\u2026", BLUE)
 
         def worker():
             t0 = time.time()
-            result = execute_python(code)
+            result = execute_python(code, SCRATCH_TIMEOUT)
             elapsed = time.time() - t0
             self.q.put((*result, elapsed))
 
@@ -555,6 +593,7 @@ class TutorApp:
             else:
                 self.scratch.deiconify()
                 self.scratch.lift()
+                self.scratch.reload()   # always reflect the on-disk scratchpad
                 self.scratch_btn.configure(bg=BLUE, fg=BG)
         else:
             self.scratch = Scratchpad(self.root, app=self)
